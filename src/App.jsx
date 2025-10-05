@@ -25,6 +25,13 @@ export default function App() {
 
   useEffect(() => {
     setPeerStatus('Sistema listo')
+      // Forzar permiso de micrófono al cargar la página
+  if (navigator.mediaDevices?.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => stream.getTracks().forEach(t => t.stop()))
+      .catch(() => {});
+  }
+
     if ('speechSynthesis' in window) synthRef.current = window.speechSynthesis
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (SpeechRecognition) {
