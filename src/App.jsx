@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react'
 import Peer from 'peerjs'
 
@@ -25,14 +24,15 @@ export default function App() {
 
   useEffect(() => {
     setPeerStatus('Sistema listo')
-      // Forzar permiso de micrófono al cargar la página
-  if (navigator.mediaDevices?.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => stream.getTracks().forEach(t => t.stop()))
-      .catch(() => {});
-  }
 
-    if ('speechSynthesis' in window) synthRef.current = window.speechSynthesis
+    // 🔧 FIX 1: pedir permiso de micrófono al cargar (evita "Iniciando...")
+    if (navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => stream.getTracks().forEach(t => t.stop()))
+        .catch(() => {})
+    }
+
+    // Configuración de voz a texto (opcional)
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (SpeechRecognition) {
       const rec = new SpeechRecognition()
@@ -48,6 +48,8 @@ export default function App() {
       rec.onend = () => setIsListening(false)
       recognitionRef.current = rec
     }
+
+    if ('speechSynthesis' in window) synthRef.current = window.speechSynthesis
     return () => { disconnect() }
   }, [])
 
@@ -63,14 +65,12 @@ export default function App() {
   const generateRoomCode = () =>
     Math.random().toString(36).substring(2, 8).toUpperCase()
 
-  const resumeAudio = async () => {
-    try { await remoteAudioRef.current?.play().catch(() => {}) } catch {}
-  }
+  // 🔧 FIX 2: PeerJS en HTTPS usando servidor público
+  const peerOpts = { debug: 1, secure: true, host: '0.peerjs.com', port: 443, path: '/' }
 
   const startAsHost = async () => {
     try {
       setConnectionStatus('Iniciando...')
-      await resumeAudio()
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false
@@ -80,8 +80,7 @@ export default function App() {
       const code = generateRoomCode()
       setRoomCode(code)
 
-      const config = { config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } }
-      peerRef.current = new Peer(code, { debug: 1, ...config })
+      peerRef.current = new Peer(code, peerOpts)
       peerRef.current.on('open', () => {
         setMode('host')
         setConnectionStatus('Esperando conexión...')
@@ -100,10 +99,9 @@ export default function App() {
           callRef.current = call
         })
         call.on('close', disconnect)
+        call.on('error', () => setConnectionStatus('Error en la llamada'))
       })
-      peerRef.current.on('error', (err) => {
-        setConnectionStatus('Error de conexión: ' + err.type)
-      })
+      peerRef.current.on('error', (err) => setConnectionStatus('Error de conexión: ' + err.type))
     } catch {
       setConnectionStatus('Error: No se puede acceder al micrófono')
     }
@@ -115,7 +113,6 @@ export default function App() {
       setMode('client')
       setRoomCode(code)
       setConnectionStatus('Obteniendo micrófono...')
-      await resumeAudio()
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false
@@ -123,8 +120,7 @@ export default function App() {
       localStreamRef.current = stream
       setConnectionStatus('Conectando...')
 
-      const config = { config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] } }
-      peerRef.current = new Peer({ debug: 1, ...config })
+      peerRef.current = new Peer(peerOpts)
       peerRef.current.on('open', () => {
         setConnectionStatus('Llamando a la sala...')
         const call = peerRef.current.call(code, stream)
@@ -143,6 +139,7 @@ export default function App() {
       })
       peerRef.current.on('error', (err) => {
         if (err.type === 'peer-unavailable') setConnectionStatus('Sala no encontrada')
+        else setConnectionStatus('Error de conexión: ' + err.type)
       })
     } catch {
       setConnectionStatus('Error: No se puede acceder al micrófono')
@@ -155,8 +152,9 @@ export default function App() {
   }
   const toggleSpeaker = () => {
     const el = remoteAudioRef.current
-    setIsSpeakerOn((prev) => { if (el) el.muted = prev; return !prev })
+    setIsSpeakerOn(prev => { if (el) el.muted = prev; return !prev })
   }
+
   const speak = (text) => {
     if (synthRef.current) {
       synthRef.current.cancel()
@@ -196,6 +194,7 @@ export default function App() {
     }
     setAssistantResponse(r); speak(r)
   }
+
   const copyRoomCode = async () => {
     if (!roomCode) return
     try { await navigator.clipboard.writeText(roomCode); setConnectionStatus('Código copiado') } catch {}
@@ -204,6 +203,7 @@ export default function App() {
     if (!navigator.share || !roomCode) return copyRoomCode()
     try { await navigator.share({ title: 'Intercomunicador PRO', text: `Únete con este código: ${roomCode}` }) } catch {}
   }
+
   const disconnect = () => {
     try {
       localStreamRef.current?.getTracks().forEach(t => t.stop())
@@ -254,7 +254,7 @@ export default function App() {
         {mode === 'host' && (
           <div style={{display:'grid', gap:12}}>
             <div style={{background:'#0b1220aa', border:'1px solid #334155', borderRadius:16, padding:16, textAlign:'center'}}>
-              <div style={{fontSize:48, marginBottom:12}} className="animate-pulse">📞</div>
+              <div style={{fontSize:48, marginBottom:12}}>📞</div>
               <h2 style={{margin:0, marginBottom:8}}>Código de Sala</h2>
               <div style={{background:'#020617', border:'2px solid #8b5cf6', borderRadius:12, padding:16, marginBottom:8}}>
                 <div style={{fontFamily:'monospace', fontSize:36, fontWeight:800, letterSpacing:6, color:'#c4b5fd'}}>{roomCode}</div>
@@ -272,7 +272,7 @@ export default function App() {
         {mode === 'client' && (
           <div style={{display:'grid', gap:12}}>
             <div style={{background:'#0b1220aa', border:'1px solid #334155', borderRadius:16, padding:16, textAlign:'center'}}>
-              <div style={{fontSize:48, marginBottom:12}} className="animate-pulse">📞</div>
+              <div style={{fontSize:48, marginBottom:12}}>📞</div>
               <h2 style={{margin:0, marginBottom:8}}>{connectionStatus}</h2>
               <div style={{fontFamily:'monospace', fontSize:28, fontWeight:700, color:'#4ade80'}}>{roomCode}</div>
             </div>
